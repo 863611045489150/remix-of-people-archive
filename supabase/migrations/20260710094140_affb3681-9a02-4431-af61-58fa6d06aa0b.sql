@@ -1,0 +1,1 @@
+CREATE POLICY "Public read friend photos" ON storage.objects FOR SELECT TO anon, authenticated USING (bucket_id = 'friend-photos');
