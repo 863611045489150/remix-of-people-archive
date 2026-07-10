@@ -173,7 +173,14 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
   }) => d)
   .handler(async ({ data }) => {
     await requireAdmin();
-    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    const patch: {
+      hero_name?: string;
+      hero_tagline?: string;
+      hero_photo_url?: string | null;
+      stat_label?: string;
+      profile_url?: string;
+      updated_at: string;
+    } = { updated_at: new Date().toISOString() };
     if (data.hero_name !== undefined) patch.hero_name = String(data.hero_name).trim();
     if (data.hero_tagline !== undefined) patch.hero_tagline = String(data.hero_tagline).trim();
     if (data.hero_photo_url !== undefined) patch.hero_photo_url = data.hero_photo_url || null;
