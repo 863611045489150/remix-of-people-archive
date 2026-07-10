@@ -14,7 +14,69 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      friends: {
+        Row: {
+          category: string
+          created_at: string
+          id: string
+          instagram_url: string
+          name: string
+          photo_url: string
+          quote: string | null
+          sort_order: number
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          id?: string
+          instagram_url: string
+          name: string
+          photo_url: string
+          quote?: string | null
+          sort_order?: number
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          id?: string
+          instagram_url?: string
+          name?: string
+          photo_url?: string
+          quote?: string | null
+          sort_order?: number
+        }
+        Relationships: []
+      }
+      site_settings: {
+        Row: {
+          hero_name: string
+          hero_photo_url: string | null
+          hero_tagline: string
+          id: number
+          profile_url: string
+          stat_label: string
+          updated_at: string
+        }
+        Insert: {
+          hero_name?: string
+          hero_photo_url?: string | null
+          hero_tagline?: string
+          id?: number
+          profile_url?: string
+          stat_label?: string
+          updated_at?: string
+        }
+        Update: {
+          hero_name?: string
+          hero_photo_url?: string | null
+          hero_tagline?: string
+          id?: number
+          profile_url?: string
+          stat_label?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
