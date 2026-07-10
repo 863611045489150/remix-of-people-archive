@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { CATEGORIES, type FriendRow, type SiteSettings } from "@/lib/site-constants";
 import {
@@ -656,5 +656,3 @@ async function resizeToSquare(file: File, size: number): Promise<string> {
     URL.revokeObjectURL(url);
   }
 }
-// keep useMemo import used
-void useMemo;
