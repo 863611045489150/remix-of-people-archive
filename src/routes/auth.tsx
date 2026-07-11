@@ -90,7 +90,15 @@ function AuthPage() {
     const result = await lovable.auth.signInWithOAuth("google", {
       redirect_uri: `${window.location.origin}/auth`,
     });
-    if (result.error) setError(result.error.message);
+    if (result.error) {
+      setError(result.error.message);
+      return;
+    }
+    // In the editor preview the session is set in place without a full redirect.
+    if (!result.redirected) {
+      const { data } = await supabase.auth.getSession();
+      if (data.session) router.navigate({ to: "/admin" });
+    }
   }
 
   return (
