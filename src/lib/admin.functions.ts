@@ -1,56 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
-import { useSession } from "@tanstack/react-start/server";
-import { createHash, timingSafeEqual } from "node:crypto";
-
-const sessionConfig = {
-  password: (process.env.ADMIN_SESSION_SECRET ?? "dev-insecure-secret-please-set-env-variable-32chars"),
-  name: "admin_session",
-  maxAge: 60 * 60 * 8, // 8 hours
-  cookie: {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax" as const,
-    path: "/",
-  },
-};
-
-type AdminSession = { unlocked?: boolean; ts?: number };
-
-function pinMatches(input: string, expected: string) {
-  const a = createHash("sha256").update(input, "utf8").digest();
-  const b = createHash("sha256").update(expected, "utf8").digest();
-  return timingSafeEqual(a, b);
-}
-
-async function requireAdmin() {
-  const session = await useSession<AdminSession>(sessionConfig);
-  if (!session.data.unlocked) throw new Error("Unauthorized");
-  return session;
-}
-
-export const checkAdminSession = createServerFn({ method: "GET" }).handler(async () => {
-  const session = await useSession<AdminSession>(sessionConfig);
-  return { unlocked: !!session.data.unlocked };
-});
-
-export const verifyAdminPin = createServerFn({ method: "POST" })
-  .inputValidator((data: { pin: string }) => ({ pin: String(data.pin ?? "") }))
-  .handler(async ({ data }) => {
-    const expected = process.env.ADMIN_PIN;
-    if (!expected) throw new Error("ADMIN_PIN not configured");
-    if (!data.pin || !pinMatches(data.pin, expected)) {
-      return { ok: false as const };
-    }
-    const session = await useSession<AdminSession>(sessionConfig);
-    await session.update({ unlocked: true, ts: Date.now() });
-    return { ok: true as const };
-  });
-
-export const adminLogout = createServerFn({ method: "POST" }).handler(async () => {
-  const session = await useSession<AdminSession>(sessionConfig);
-  await session.clear();
-  return { ok: true as const };
-});
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { requireAdmin } from "@/lib/roles";
 
 const CATEGORIES = [
   "Best Friend",
@@ -85,24 +35,46 @@ function validateFriendInput(d: {
   return { name, category, instagram_url, quote, photo_url };
 }
 
+export const checkAdminAccess = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data: isAdmin } = await context.supabase.rpc("has_role", {
+      _user_id: context.userId,
+      _role: "admin",
+    });
+    return { isAdmin: !!isAdmin };
+  });
+
+export const bootstrapAdmin = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data: isAdmin } = await context.supabase.rpc("has_role", {
+      _user_id: context.userId,
+      _role: "admin",
+    });
+    if (isAdmin) return { ok: true, wasBootstrapped: false };
+    const { data: bootstrapped, error } = await context.supabase.rpc("bootstrap_first_admin");
+    if (error) throw error;
+    return { ok: !!bootstrapped, wasBootstrapped: !!bootstrapped };
+  });
+
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((data: { dataUrl: string }) => ({ dataUrl: String(data.dataUrl ?? "") }))
-  .handler(async ({ data }) => {
-    await requireAdmin();
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
     const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(data.dataUrl);
     if (!match) throw new Error("Invalid image data");
     const mime = match[1];
     const ext = mime.split("/")[1].replace("jpeg", "jpg");
     const bytes = Buffer.from(match[2], "base64");
     if (bytes.length > 2_000_000) throw new Error("Image too large");
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const path = `${crypto.randomUUID()}.${ext}`;
-    const { error } = await supabaseAdmin.storage
+    const { error } = await context.supabase.storage
       .from("friend-photos")
       .upload(path, bytes, { contentType: mime, upsert: false });
     if (error) throw error;
-    // 100-year signed URL (private bucket, blocked from being public)
-    const { data: signed, error: sErr } = await supabaseAdmin.storage
+    const { data: signed, error: sErr } = await context.supabase.storage
       .from("friend-photos")
       .createSignedUrl(path, 60 * 60 * 24 * 365 * 100);
     if (sErr || !signed) throw sErr ?? new Error("Failed to sign URL");
@@ -110,6 +82,7 @@ export const uploadFriendPhoto = createServerFn({ method: "POST" })
   });
 
 export const addFriend = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: {
     name: string;
     category: string;
@@ -117,20 +90,16 @@ export const addFriend = createServerFn({ method: "POST" })
     quote?: string | null;
     photo_url: string;
   }) => d)
-  .handler(async ({ data }) => {
-    await requireAdmin();
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
     const clean = validateFriendInput(data);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: row, error } = await supabaseAdmin
-      .from("friends")
-      .insert(clean)
-      .select()
-      .single();
+    const { data: row, error } = await context.supabase.from("friends").insert(clean).select().single();
     if (error) throw error;
     return row;
   });
 
 export const updateFriend = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: {
     id: string;
     name: string;
@@ -139,11 +108,10 @@ export const updateFriend = createServerFn({ method: "POST" })
     quote?: string | null;
     photo_url: string;
   }) => d)
-  .handler(async ({ data }) => {
-    await requireAdmin();
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
     const clean = validateFriendInput(data);
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: row, error } = await supabaseAdmin
+    const { data: row, error } = await context.supabase
       .from("friends")
       .update(clean)
       .eq("id", data.id)
@@ -154,16 +122,17 @@ export const updateFriend = createServerFn({ method: "POST" })
   });
 
 export const deleteFriend = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: { id: string }) => d)
-  .handler(async ({ data }) => {
-    await requireAdmin();
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin.from("friends").delete().eq("id", data.id);
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
+    const { error } = await context.supabase.from("friends").delete().eq("id", data.id);
     if (error) throw error;
     return { ok: true as const };
   });
 
 export const updateSiteSettings = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: {
     hero_name?: string;
     hero_tagline?: string;
@@ -171,8 +140,8 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
     stat_label?: string;
     profile_url?: string;
   }) => d)
-  .handler(async ({ data }) => {
-    await requireAdmin();
+  .handler(async ({ data, context }) => {
+    await requireAdmin(context);
     const patch: {
       hero_name?: string;
       hero_tagline?: string;
@@ -186,8 +155,7 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
     if (data.hero_photo_url !== undefined) patch.hero_photo_url = data.hero_photo_url || null;
     if (data.stat_label !== undefined) patch.stat_label = String(data.stat_label).trim();
     if (data.profile_url !== undefined) patch.profile_url = String(data.profile_url).trim();
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: row, error } = await supabaseAdmin
+    const { data: row, error } = await context.supabase
       .from("site_settings")
       .update(patch)
       .eq("id", 1)

@@ -1,20 +1,19 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { CATEGORIES, type FriendRow, type SiteSettings } from "@/lib/site-constants";
 import {
   addFriend,
-  adminLogout,
-  checkAdminSession,
+  bootstrapAdmin,
+  checkAdminAccess,
   deleteFriend,
   updateFriend,
   updateSiteSettings,
   uploadFriendPhoto,
-  verifyAdminPin,
 } from "@/lib/admin.functions";
 
-export const Route = createFileRoute("/admin")({
+export const Route = createFileRoute("/_authenticated/admin")({
   head: () => ({ meta: [{ title: "Admin — Special Mentions" }, { name: "robots", content: "noindex" }] }),
   component: AdminPage,
 });
@@ -59,107 +58,69 @@ const btnGhost: React.CSSProperties = {
 };
 
 function AdminPage() {
-  const check = useServerFn(checkAdminSession);
-  const [authed, setAuthed] = useState<boolean | null>(null);
+  const check = useServerFn(checkAdminAccess);
+  const bootstrap = useServerFn(bootstrapAdmin);
+  const router = useRouter();
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
   useEffect(() => {
-    check().then((r) => setAuthed(!!r.unlocked)).catch(() => setAuthed(false));
-  }, [check]);
+    check()
+      .then(async (r) => {
+        if (r.isAdmin) {
+          setIsAdmin(true);
+          return;
+        }
+        const b = await bootstrap();
+        if (b.ok) {
+          await router.invalidate();
+          setIsAdmin(true);
+        } else {
+          setIsAdmin(false);
+        }
+      })
+      .catch(() => setIsAdmin(false));
+  }, [check, bootstrap, router]);
 
-  if (authed === null) {
+  if (isAdmin === null) {
+    return <div style={{ minHeight: "100svh", background: "#FAF6F0" }} />;
+  }
+
+  if (!isAdmin) {
     return (
-      <div style={{ minHeight: "100svh", background: "#FAF6F0" }} />
+      <div
+        style={{
+          minHeight: "100svh",
+          background: "#FAF6F0",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: 24,
+          fontFamily: "Inter, sans-serif",
+        }}
+      >
+        <div style={{ maxWidth: 360, textAlign: "center" }}>
+          <h1 style={{ fontFamily: "Fraunces, serif", fontWeight: 500, fontSize: 24 }}>Not authorized</h1>
+          <p style={{ color: "#8A8378", lineHeight: 1.5 }}>
+            This account is not an admin. The first person to sign in becomes the admin.
+          </p>
+          <button
+            onClick={() => supabase.auth.signOut().then(() => router.navigate({ to: "/auth", replace: true }))}
+            style={{ ...btnPrimary, marginTop: 16 }}
+          >
+            Sign out
+          </button>
+        </div>
+      </div>
     );
   }
-  if (!authed) return <PinGate onSuccess={() => setAuthed(true)} />;
-  return <Dashboard onLogout={() => setAuthed(false)} />;
-}
 
-function PinGate({ onSuccess }: { onSuccess: () => void }) {
-  const verify = useServerFn(verifyAdminPin);
-  const [pin, setPin] = useState("");
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError("");
-    try {
-      const r = await verify({ data: { pin } });
-      if (r.ok) onSuccess();
-      else setError("Invalid code");
-    } catch {
-      setError("Invalid code");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div
-      style={{
-        minHeight: "100svh",
-        background: "#FAF6F0",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 24,
-      }}
-    >
-      <form
-        onSubmit={submit}
-        style={{ width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: 16 }}
-      >
-        <input
-          type="password"
-          inputMode="numeric"
-          pattern="[0-9]*"
-          autoFocus
-          value={pin}
-          onChange={(e) => setPin(e.target.value)}
-          placeholder="Enter Access Code"
-          style={{ ...inputStyle, textAlign: "center", letterSpacing: "0.3em" }}
-        />
-        {error && (
-          <div
-            style={{
-              fontFamily: "Inter, sans-serif",
-              fontSize: 14,
-              lineHeight: 1.5,
-              color: "#8A8378",
-              textAlign: "center",
-            }}
-          >
-            {error}
-          </div>
-        )}
-        <button type="submit" disabled={busy || !pin} style={{ ...btnPrimary, opacity: busy || !pin ? 0.5 : 1 }}>
-          Enter
-        </button>
-        <Link
-          to="/"
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontSize: 12,
-            lineHeight: 1.5,
-            color: "#8A8378",
-            textAlign: "center",
-            textDecoration: "none",
-            opacity: 0.6,
-          }}
-        >
-          ← Back to site
-        </Link>
-      </form>
-    </div>
-  );
+  return <Dashboard />;
 }
 
 type EditingFriend = Partial<FriendRow> & { id?: string };
 
-function Dashboard({ onLogout }: { onLogout: () => void }) {
-  const logout = useServerFn(adminLogout);
+function Dashboard() {
+  const router = useRouter();
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [editing, setEditing] = useState<EditingFriend | null>(null);
@@ -176,6 +137,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     refresh();
   }, []);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.navigate({ to: "/auth", replace: true });
+  }
 
   return (
     <div style={{ minHeight: "100svh", background: "#FAF6F0", padding: 24, fontFamily: "Inter, sans-serif" }}>
@@ -205,29 +171,16 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             >
               Site settings
             </button>
-            <button
-              style={btnGhost}
-              onClick={async () => {
-                await logout();
-                onLogout();
-              }}
-            >
-              Log out
+            <button style={btnGhost} onClick={signOut}>
+              Sign out
             </button>
           </div>
         </header>
 
         {tab === "friends" && (
-          <FriendsTab
-            friends={friends}
-            editing={editing}
-            setEditing={setEditing}
-            refresh={refresh}
-          />
+          <FriendsTab friends={friends} editing={editing} setEditing={setEditing} refresh={refresh} />
         )}
-        {tab === "settings" && settings && (
-          <SettingsTab settings={settings} refresh={refresh} />
-        )}
+        {tab === "settings" && settings && <SettingsTab settings={settings} refresh={refresh} />}
       </div>
     </div>
   );
