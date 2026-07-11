@@ -60,7 +60,7 @@ export const bootstrapAdmin = createServerFn({ method: "POST" })
 
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((data: { dataUrl: string }) => ({ dataUrl: String(dataUrl ?? "") }))
+  .inputValidator((data: { dataUrl: string }) => ({ dataUrl: String(data.dataUrl ?? "") }))
   .handler(async ({ data, context }) => {
     await requireAdmin(context);
     const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(data.dataUrl);
