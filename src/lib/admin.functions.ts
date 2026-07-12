@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
-import { useSession } from "@tanstack/react-start/server";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { getCookie, setCookie } from "@tanstack/react-start/server";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const CATEGORIES = [
   "Best Friend",
@@ -11,31 +11,68 @@ const CATEGORIES = [
 ] as const;
 type Category = (typeof CATEGORIES)[number];
 
-type AdminSession = { unlocked?: boolean };
+const COOKIE_NAME = "sm_admin";
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
-function sessionConfig() {
-  const password = process.env.ADMIN_SESSION_SECRET;
-  if (!password || password.length < 32) {
+function sessionSecret(): string {
+  const s = process.env.ADMIN_SESSION_SECRET;
+  if (!s || s.length < 32) {
     throw new Error("ADMIN_SESSION_SECRET must be set to a 32+ character random value");
   }
-  return {
-    password,
-    name: "sm-admin",
-    maxAge: 60 * 60 * 24 * 7,
-    cookie: { httpOnly: true, secure: true, sameSite: "lax" as const, path: "/" },
-  };
+  return s;
+}
+
+function sign(payload: string): string {
+  return createHmac("sha256", sessionSecret()).update(payload).digest("base64url");
+}
+
+function issueSessionCookie() {
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
+  const payload = String(exp);
+  const value = `${payload}.${sign(payload)}`;
+  setCookie(COOKIE_NAME, value, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: SESSION_TTL_SECONDS,
+  });
+}
+
+function clearSessionCookie() {
+  setCookie(COOKIE_NAME, "", {
+    httpOnly: true,
+    secure: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
+}
+
+function isUnlocked(): boolean {
+  const raw = getCookie(COOKIE_NAME);
+  if (!raw) return false;
+  const idx = raw.lastIndexOf(".");
+  if (idx <= 0) return false;
+  const payload = raw.slice(0, idx);
+  const provided = raw.slice(idx + 1);
+  const expected = sign(payload);
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return false;
+  const exp = Number(payload);
+  if (!Number.isFinite(exp) || exp * 1000 < Date.now()) return false;
+  return true;
+}
+
+function requireUnlocked() {
+  if (!isUnlocked()) throw new Error("Unauthorized");
 }
 
 function pinMatches(input: string, expected: string): boolean {
   const a = createHash("sha256").update(input, "utf8").digest();
   const b = createHash("sha256").update(expected, "utf8").digest();
   return timingSafeEqual(a, b);
-}
-
-async function requireUnlocked() {
-  const session = await useSession<AdminSession>(sessionConfig());
-  if (!session.data.unlocked) throw new Error("Unauthorized");
-  return session;
 }
 
 function validateFriendInput(d: {
@@ -64,8 +101,7 @@ function validateFriendInput(d: {
 
 export const checkAdminUnlocked = createServerFn({ method: "GET" }).handler(async () => {
   try {
-    const session = await useSession<AdminSession>(sessionConfig());
-    return { unlocked: !!session.data.unlocked };
+    return { unlocked: isUnlocked() };
   } catch {
     return { unlocked: false };
   }
@@ -76,26 +112,22 @@ export const unlockAdmin = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const expected = process.env.ADMIN_PIN;
     if (!expected) throw new Error("ADMIN_PIN is not configured");
-    // Small delay to blunt brute-force timing across requests.
+    // Blunt brute-force timing across requests.
     await new Promise((r) => setTimeout(r, 250));
-    if (!data.pin || !pinMatches(data.pin, expected)) {
-      return { ok: false as const };
-    }
-    const session = await useSession<AdminSession>(sessionConfig());
-    await session.update({ unlocked: true });
+    if (!data.pin || !pinMatches(data.pin, expected)) return { ok: false as const };
+    issueSessionCookie();
     return { ok: true as const };
   });
 
 export const lockAdmin = createServerFn({ method: "POST" }).handler(async () => {
-  const session = await useSession<AdminSession>(sessionConfig());
-  await session.clear();
+  clearSessionCookie();
   return { ok: true as const };
 });
 
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
   .inputValidator((data: { dataUrl: string }) => ({ dataUrl: String(data.dataUrl ?? "") }))
   .handler(async ({ data }) => {
-    await requireUnlocked();
+    requireUnlocked();
     const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(data.dataUrl);
     if (!match) throw new Error("Invalid image data");
     const mime = match[1];
@@ -124,7 +156,7 @@ export const addFriend = createServerFn({ method: "POST" })
     photo_url: string;
   }) => d)
   .handler(async ({ data }) => {
-    await requireUnlocked();
+    requireUnlocked();
     const clean = validateFriendInput(data);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabaseAdmin.from("friends").insert(clean).select().single();
@@ -142,7 +174,7 @@ export const updateFriend = createServerFn({ method: "POST" })
     photo_url: string;
   }) => d)
   .handler(async ({ data }) => {
-    await requireUnlocked();
+    requireUnlocked();
     const clean = validateFriendInput(data);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabaseAdmin
@@ -158,7 +190,7 @@ export const updateFriend = createServerFn({ method: "POST" })
 export const deleteFriend = createServerFn({ method: "POST" })
   .inputValidator((d: { id: string }) => ({ id: String(d.id ?? "") }))
   .handler(async ({ data }) => {
-    await requireUnlocked();
+    requireUnlocked();
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error } = await supabaseAdmin.from("friends").delete().eq("id", data.id);
     if (error) throw error;
@@ -174,7 +206,7 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
     profile_url?: string;
   }) => d)
   .handler(async ({ data }) => {
-    await requireUnlocked();
+    requireUnlocked();
     const patch: {
       hero_name?: string;
       hero_tagline?: string;
