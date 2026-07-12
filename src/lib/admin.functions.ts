@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { requireAdmin } from "@/lib/roles";
+import { useSession } from "@tanstack/react-start/server";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 const CATEGORIES = [
   "Best Friend",
@@ -11,6 +11,33 @@ const CATEGORIES = [
 ] as const;
 type Category = (typeof CATEGORIES)[number];
 
+type AdminSession = { unlocked?: boolean };
+
+function sessionConfig() {
+  const password = process.env.ADMIN_SESSION_SECRET;
+  if (!password || password.length < 32) {
+    throw new Error("ADMIN_SESSION_SECRET must be set to a 32+ character random value");
+  }
+  return {
+    password,
+    name: "sm-admin",
+    maxAge: 60 * 60 * 24 * 7,
+    cookie: { httpOnly: true, secure: true, sameSite: "lax" as const, path: "/" },
+  };
+}
+
+function pinMatches(input: string, expected: string): boolean {
+  const a = createHash("sha256").update(input, "utf8").digest();
+  const b = createHash("sha256").update(expected, "utf8").digest();
+  return timingSafeEqual(a, b);
+}
+
+async function requireUnlocked() {
+  const session = await useSession<AdminSession>(sessionConfig());
+  if (!session.data.unlocked) throw new Error("Unauthorized");
+  return session;
+}
+
 function validateFriendInput(d: {
   name?: string;
   category?: string;
@@ -18,11 +45,11 @@ function validateFriendInput(d: {
   quote?: string | null;
   photo_url?: string;
 }) {
-  const name = String(d.name ?? "").trim();
+  const name = String(d.name ?? "").trim().slice(0, 100);
   const category = String(d.category ?? "") as Category;
-  const instagram_url = String(d.instagram_url ?? "").trim();
+  const instagram_url = String(d.instagram_url ?? "").trim().slice(0, 500);
   const quote = d.quote == null ? null : String(d.quote).trim().slice(0, 60) || null;
-  const photo_url = String(d.photo_url ?? "").trim();
+  const photo_url = String(d.photo_url ?? "").trim().slice(0, 1000);
   if (!name) throw new Error("Name required");
   if (!CATEGORIES.includes(category)) throw new Error("Invalid category");
   if (!instagram_url) throw new Error("Instagram URL required");
@@ -35,46 +62,53 @@ function validateFriendInput(d: {
   return { name, category, instagram_url, quote, photo_url };
 }
 
-export const checkAdminAccess = createServerFn({ method: "GET" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { data: isAdmin } = await context.supabase.rpc("has_role", {
-      _user_id: context.userId,
-      _role: "admin",
-    });
-    return { isAdmin: !!isAdmin };
+export const checkAdminUnlocked = createServerFn({ method: "GET" }).handler(async () => {
+  try {
+    const session = await useSession<AdminSession>(sessionConfig());
+    return { unlocked: !!session.data.unlocked };
+  } catch {
+    return { unlocked: false };
+  }
+});
+
+export const unlockAdmin = createServerFn({ method: "POST" })
+  .inputValidator((d: { pin: string }) => ({ pin: String(d.pin ?? "") }))
+  .handler(async ({ data }) => {
+    const expected = process.env.ADMIN_PIN;
+    if (!expected) throw new Error("ADMIN_PIN is not configured");
+    // Small delay to blunt brute-force timing across requests.
+    await new Promise((r) => setTimeout(r, 250));
+    if (!data.pin || !pinMatches(data.pin, expected)) {
+      return { ok: false as const };
+    }
+    const session = await useSession<AdminSession>(sessionConfig());
+    await session.update({ unlocked: true });
+    return { ok: true as const };
   });
 
-export const bootstrapAdmin = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .handler(async ({ context }) => {
-    const { data: isAdmin } = await context.supabase.rpc("has_role", {
-      _user_id: context.userId,
-      _role: "admin",
-    });
-    if (isAdmin) return { ok: true, wasBootstrapped: false };
-    const { data: bootstrapped, error } = await context.supabase.rpc("bootstrap_first_admin");
-    if (error) throw error;
-    return { ok: !!bootstrapped, wasBootstrapped: !!bootstrapped };
-  });
+export const lockAdmin = createServerFn({ method: "POST" }).handler(async () => {
+  const session = await useSession<AdminSession>(sessionConfig());
+  await session.clear();
+  return { ok: true as const };
+});
 
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((data: { dataUrl: string }) => ({ dataUrl: String(data.dataUrl ?? "") }))
-  .handler(async ({ data, context }) => {
-    await requireAdmin(context);
+  .handler(async ({ data }) => {
+    await requireUnlocked();
     const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(data.dataUrl);
     if (!match) throw new Error("Invalid image data");
     const mime = match[1];
     const ext = mime.split("/")[1].replace("jpeg", "jpg");
     const bytes = Buffer.from(match[2], "base64");
     if (bytes.length > 2_000_000) throw new Error("Image too large");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const path = `${crypto.randomUUID()}.${ext}`;
-    const { error } = await context.supabase.storage
+    const { error } = await supabaseAdmin.storage
       .from("friend-photos")
       .upload(path, bytes, { contentType: mime, upsert: false });
     if (error) throw error;
-    const { data: signed, error: sErr } = await context.supabase.storage
+    const { data: signed, error: sErr } = await supabaseAdmin.storage
       .from("friend-photos")
       .createSignedUrl(path, 60 * 60 * 24 * 365 * 100);
     if (sErr || !signed) throw sErr ?? new Error("Failed to sign URL");
@@ -82,7 +116,6 @@ export const uploadFriendPhoto = createServerFn({ method: "POST" })
   });
 
 export const addFriend = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((d: {
     name: string;
     category: string;
@@ -90,16 +123,16 @@ export const addFriend = createServerFn({ method: "POST" })
     quote?: string | null;
     photo_url: string;
   }) => d)
-  .handler(async ({ data, context }) => {
-    await requireAdmin(context);
+  .handler(async ({ data }) => {
+    await requireUnlocked();
     const clean = validateFriendInput(data);
-    const { data: row, error } = await context.supabase.from("friends").insert(clean).select().single();
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: row, error } = await supabaseAdmin.from("friends").insert(clean).select().single();
     if (error) throw error;
     return row;
   });
 
 export const updateFriend = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((d: {
     id: string;
     name: string;
@@ -108,10 +141,11 @@ export const updateFriend = createServerFn({ method: "POST" })
     quote?: string | null;
     photo_url: string;
   }) => d)
-  .handler(async ({ data, context }) => {
-    await requireAdmin(context);
+  .handler(async ({ data }) => {
+    await requireUnlocked();
     const clean = validateFriendInput(data);
-    const { data: row, error } = await context.supabase
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: row, error } = await supabaseAdmin
       .from("friends")
       .update(clean)
       .eq("id", data.id)
@@ -122,17 +156,16 @@ export const updateFriend = createServerFn({ method: "POST" })
   });
 
 export const deleteFriend = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .inputValidator((d: { id: string }) => d)
-  .handler(async ({ data, context }) => {
-    await requireAdmin(context);
-    const { error } = await context.supabase.from("friends").delete().eq("id", data.id);
+  .inputValidator((d: { id: string }) => ({ id: String(d.id ?? "") }))
+  .handler(async ({ data }) => {
+    await requireUnlocked();
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.from("friends").delete().eq("id", data.id);
     if (error) throw error;
     return { ok: true as const };
   });
 
 export const updateSiteSettings = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .inputValidator((d: {
     hero_name?: string;
     hero_tagline?: string;
@@ -140,8 +173,8 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
     stat_label?: string;
     profile_url?: string;
   }) => d)
-  .handler(async ({ data, context }) => {
-    await requireAdmin(context);
+  .handler(async ({ data }) => {
+    await requireUnlocked();
     const patch: {
       hero_name?: string;
       hero_tagline?: string;
@@ -150,12 +183,13 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
       profile_url?: string;
       updated_at: string;
     } = { updated_at: new Date().toISOString() };
-    if (data.hero_name !== undefined) patch.hero_name = String(data.hero_name).trim();
-    if (data.hero_tagline !== undefined) patch.hero_tagline = String(data.hero_tagline).trim();
+    if (data.hero_name !== undefined) patch.hero_name = String(data.hero_name).trim().slice(0, 200);
+    if (data.hero_tagline !== undefined) patch.hero_tagline = String(data.hero_tagline).trim().slice(0, 300);
     if (data.hero_photo_url !== undefined) patch.hero_photo_url = data.hero_photo_url || null;
-    if (data.stat_label !== undefined) patch.stat_label = String(data.stat_label).trim();
-    if (data.profile_url !== undefined) patch.profile_url = String(data.profile_url).trim();
-    const { data: row, error } = await context.supabase
+    if (data.stat_label !== undefined) patch.stat_label = String(data.stat_label).trim().slice(0, 100);
+    if (data.profile_url !== undefined) patch.profile_url = String(data.profile_url).trim().slice(0, 500);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: row, error } = await supabaseAdmin
       .from("site_settings")
       .update(patch)
       .eq("id", 1)
