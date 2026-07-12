@@ -39,18 +39,6 @@ const btnPrimary: React.CSSProperties = {
   letterSpacing: "0.05em",
 };
 
-const btnGhost: React.CSSProperties = {
-  padding: "12px 24px",
-  border: "1px solid #E5DDD1",
-  borderRadius: 16,
-  background: "transparent",
-  color: "#1A1A1A",
-  fontFamily: "Inter, sans-serif",
-  fontSize: 14,
-  lineHeight: 1.5,
-  cursor: "pointer",
-};
-
 function AuthPage() {
   const router = useRouter();
   const [email, setEmail] = useState("");
@@ -82,15 +70,6 @@ function AuthPage() {
     });
     if (error) setError(error.message);
     else setMessage("Check your email to confirm your account.");
-  }
-
-  async function signInWithGoogle() {
-    setError("");
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth` },
-    });
-    if (error) setError(error.message);
   }
 
   return (
@@ -143,9 +122,6 @@ function AuthPage() {
         {message && <div style={{ color: "#2A6F3C", fontSize: 14, lineHeight: 1.5 }}>{message}</div>}
         <button type="submit" style={btnPrimary}>
           {mode === "signin" ? "Sign in" : "Sign up"}
-        </button>
-        <button type="button" onClick={signInWithGoogle} style={btnGhost}>
-          Continue with Google
         </button>
         <div style={{ textAlign: "center", fontSize: 14, color: "#8A8378" }}>
           {mode === "signin" ? (
