@@ -1,19 +1,21 @@
-import { createFileRoute, useRouter } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { CATEGORIES, type FriendRow, type SiteSettings } from "@/lib/site-constants";
 import {
   addFriend,
-  bootstrapAdmin,
-  checkAdminAccess,
+  checkAdminUnlocked,
   deleteFriend,
+  lockAdmin,
+  unlockAdmin,
   updateFriend,
   updateSiteSettings,
   uploadFriendPhoto,
 } from "@/lib/admin.functions";
 
-export const Route = createFileRoute("/_authenticated/admin")({
+export const Route = createFileRoute("/admin")({
+  ssr: false,
   head: () => ({ meta: [{ title: "Admin — Special Mentions" }, { name: "robots", content: "noindex" }] }),
   component: AdminPage,
 });
@@ -58,69 +60,81 @@ const btnGhost: React.CSSProperties = {
 };
 
 function AdminPage() {
-  const check = useServerFn(checkAdminAccess);
-  const bootstrap = useServerFn(bootstrapAdmin);
-  const router = useRouter();
-  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const check = useServerFn(checkAdminUnlocked);
+  const [unlocked, setUnlocked] = useState<boolean | null>(null);
 
   useEffect(() => {
     check()
-      .then(async (r) => {
-        if (r.isAdmin) {
-          setIsAdmin(true);
-          return;
-        }
-        const b = await bootstrap();
-        if (b.ok) {
-          await router.invalidate();
-          setIsAdmin(true);
-        } else {
-          setIsAdmin(false);
-        }
-      })
-      .catch(() => setIsAdmin(false));
-  }, [check, bootstrap, router]);
+      .then((r) => setUnlocked(!!r.unlocked))
+      .catch(() => setUnlocked(false));
+  }, [check]);
 
-  if (isAdmin === null) {
-    return <div style={{ minHeight: "100svh", background: "#FAF6F0" }} />;
+  if (unlocked === null) return <div style={{ minHeight: "100svh", background: "#FAF6F0" }} />;
+  if (!unlocked) return <PinGate onUnlocked={() => setUnlocked(true)} />;
+  return <Dashboard onLocked={() => setUnlocked(false)} />;
+}
+
+function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
+  const unlock = useServerFn(unlockAdmin);
+  const [pin, setPin] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const r = await unlock({ data: { pin } });
+      if (r.ok) onUnlocked();
+      else setError("Incorrect PIN");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
-  if (!isAdmin) {
-    return (
-      <div
-        style={{
-          minHeight: "100svh",
-          background: "#FAF6F0",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 24,
-          fontFamily: "Inter, sans-serif",
-        }}
-      >
-        <div style={{ maxWidth: 360, textAlign: "center" }}>
-          <h1 style={{ fontFamily: "Fraunces, serif", fontWeight: 500, fontSize: 24 }}>Not authorized</h1>
-          <p style={{ color: "#8A8378", lineHeight: 1.5 }}>
-            This account is not an admin. The first person to sign in becomes the admin.
-          </p>
-          <button
-            onClick={() => supabase.auth.signOut().then(() => router.navigate({ to: "/auth", replace: true }))}
-            style={{ ...btnPrimary, marginTop: 16 }}
-          >
-            Sign out
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return <Dashboard />;
+  return (
+    <div
+      style={{
+        minHeight: "100svh",
+        background: "#FAF6F0",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        fontFamily: "Inter, sans-serif",
+      }}
+    >
+      <form onSubmit={submit} style={{ width: "100%", maxWidth: 320, display: "flex", flexDirection: "column", gap: 16 }}>
+        <h1 style={{ fontFamily: "Fraunces, serif", fontWeight: 500, fontSize: 28, lineHeight: 1.2, textAlign: "center" }}>
+          Admin access
+        </h1>
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          placeholder="PIN"
+          value={pin}
+          onChange={(e) => setPin(e.target.value)}
+          required
+          autoFocus
+          style={inputStyle}
+        />
+        {error && <div style={{ color: "#B94A3A", fontSize: 14, lineHeight: 1.5, textAlign: "center" }}>{error}</div>}
+        <button type="submit" style={{ ...btnPrimary, opacity: busy ? 0.5 : 1 }} disabled={busy || !pin}>
+          {busy ? "Checking…" : "Unlock"}
+        </button>
+      </form>
+    </div>
+  );
 }
 
 type EditingFriend = Partial<FriendRow> & { id?: string };
 
-function Dashboard() {
-  const router = useRouter();
+function Dashboard({ onLocked }: { onLocked: () => void }) {
+  const lock = useServerFn(lockAdmin);
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [editing, setEditing] = useState<EditingFriend | null>(null);
@@ -139,8 +153,8 @@ function Dashboard() {
   }, []);
 
   async function signOut() {
-    await supabase.auth.signOut();
-    router.navigate({ to: "/auth", replace: true });
+    await lock();
+    onLocked();
   }
 
   return (
@@ -155,9 +169,7 @@ function Dashboard() {
             flexWrap: "wrap",
           }}
         >
-          <h1 style={{ fontFamily: "Fraunces, serif", fontWeight: 500, fontSize: 28, lineHeight: 1.2 }}>
-            Admin
-          </h1>
+          <h1 style={{ fontFamily: "Fraunces, serif", fontWeight: 500, fontSize: 28, lineHeight: 1.2 }}>Admin</h1>
           <div style={{ display: "flex", gap: 8 }}>
             <button
               style={{ ...btnGhost, background: tab === "friends" ? "#FFFFFF" : "transparent" }}
@@ -172,7 +184,7 @@ function Dashboard() {
               Site settings
             </button>
             <button style={btnGhost} onClick={signOut}>
-              Sign out
+              Lock
             </button>
           </div>
         </header>
