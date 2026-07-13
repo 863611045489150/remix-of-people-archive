@@ -7,7 +7,6 @@ import {
   addFriend,
   checkAdminUnlocked,
   deleteFriend,
-  lockAdmin,
   unlockAdmin,
   updateFriend,
   updateSiteSettings,
@@ -59,13 +58,29 @@ const btnGhost: React.CSSProperties = {
   cursor: "pointer",
 };
 
+const TOKEN_KEY = "sm_admin_token";
+const getToken = () => (typeof window === "undefined" ? "" : localStorage.getItem(TOKEN_KEY) ?? "");
+const setToken = (t: string) => {
+  if (typeof window === "undefined") return;
+  if (t) localStorage.setItem(TOKEN_KEY, t);
+  else localStorage.removeItem(TOKEN_KEY);
+};
+
 function AdminPage() {
   const check = useServerFn(checkAdminUnlocked);
   const [unlocked, setUnlocked] = useState<boolean | null>(null);
 
   useEffect(() => {
-    check()
-      .then((r) => setUnlocked(!!r.unlocked))
+    const token = getToken();
+    if (!token) {
+      setUnlocked(false);
+      return;
+    }
+    check({ data: { token } })
+      .then((r) => {
+        if (!r.unlocked) setToken("");
+        setUnlocked(!!r.unlocked);
+      })
       .catch(() => setUnlocked(false));
   }, [check]);
 
@@ -86,8 +101,10 @@ function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
     setError("");
     try {
       const r = await unlock({ data: { pin } });
-      if (r.ok) onUnlocked();
-      else setError("Incorrect PIN");
+      if (r.ok && r.token) {
+        setToken(r.token);
+        onUnlocked();
+      } else setError("Incorrect PIN");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -134,7 +151,6 @@ function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
 type EditingFriend = Partial<FriendRow> & { id?: string };
 
 function Dashboard({ onLocked }: { onLocked: () => void }) {
-  const lock = useServerFn(lockAdmin);
   const [friends, setFriends] = useState<FriendRow[]>([]);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [editing, setEditing] = useState<EditingFriend | null>(null);
@@ -152,8 +168,8 @@ function Dashboard({ onLocked }: { onLocked: () => void }) {
     refresh();
   }, []);
 
-  async function signOut() {
-    await lock();
+  function signOut() {
+    setToken("");
     onLocked();
   }
 
@@ -270,7 +286,7 @@ function FriendsTab({
                 style={{ ...btnGhost, color: "#B94A3A" }}
                 onClick={async () => {
                   if (!confirm(`Delete ${f.name}? This cannot be undone.`)) return;
-                  await del({ data: { id: f.id } });
+                  await del({ data: { id: f.id, token: getToken() } });
                   await refresh();
                 }}
               >
@@ -324,7 +340,7 @@ function FriendForm({
     setError("");
     try {
       const dataUrl = await resizeToSquare(file, 480);
-      const r = await uploadPhoto({ data: { dataUrl } });
+      const r = await uploadPhoto({ data: { dataUrl, token: getToken() } });
       setPhotoUrl(r.url);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
@@ -346,9 +362,9 @@ function FriendForm({
         photo_url: photoUrl,
       };
       if (initial.id) {
-        await upd({ data: { id: initial.id, ...payload } });
+        await upd({ data: { id: initial.id, ...payload, token: getToken() } });
       } else {
-        await add({ data: payload });
+        await add({ data: { ...payload, token: getToken() } });
       }
       onSaved();
     } catch (err) {
@@ -497,7 +513,7 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
     setUploading(true);
     try {
       const dataUrl = await resizeToSquare(file, 640);
-      const r = await uploadPhoto({ data: { dataUrl } });
+      const r = await uploadPhoto({ data: { dataUrl, token: getToken() } });
       setPhotoUrl(r.url);
     } finally {
       setUploading(false);
@@ -516,6 +532,7 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
           hero_photo_url: photoUrl || null,
           stat_label: statLabel,
           profile_url: profileUrl,
+          token: getToken(),
         },
       });
       await refresh();
