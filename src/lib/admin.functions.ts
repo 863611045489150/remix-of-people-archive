@@ -1,5 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getCookie, setCookie } from "@tanstack/react-start/server";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 const CATEGORIES = [
@@ -11,7 +10,6 @@ const CATEGORIES = [
 ] as const;
 type Category = (typeof CATEGORIES)[number];
 
-const COOKIE_NAME = "sm_admin";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 
 function sessionSecret(): string {
@@ -26,31 +24,13 @@ function sign(payload: string): string {
   return createHmac("sha256", sessionSecret()).update(payload).digest("base64url");
 }
 
-function issueSessionCookie() {
+function issueToken(): string {
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
   const payload = String(exp);
-  const value = `${payload}.${sign(payload)}`;
-  setCookie(COOKIE_NAME, value, {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: SESSION_TTL_SECONDS,
-  });
+  return `${payload}.${sign(payload)}`;
 }
 
-function clearSessionCookie() {
-  setCookie(COOKIE_NAME, "", {
-    httpOnly: true,
-    secure: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 0,
-  });
-}
-
-function isUnlocked(): boolean {
-  const raw = getCookie(COOKIE_NAME);
+function isTokenValid(raw: string | undefined | null): boolean {
   if (!raw) return false;
   const idx = raw.lastIndexOf(".");
   if (idx <= 0) return false;
@@ -65,8 +45,8 @@ function isUnlocked(): boolean {
   return true;
 }
 
-function requireUnlocked() {
-  if (!isUnlocked()) throw new Error("Unauthorized");
+function requireToken(token: string | undefined) {
+  if (!isTokenValid(token)) throw new Error("Unauthorized");
 }
 
 function pinMatches(input: string, expected: string): boolean {
@@ -99,35 +79,33 @@ function validateFriendInput(d: {
   return { name, category, instagram_url, quote, photo_url };
 }
 
-export const checkAdminUnlocked = createServerFn({ method: "GET" }).handler(async () => {
-  try {
-    return { unlocked: isUnlocked() };
-  } catch {
-    return { unlocked: false };
-  }
-});
+export const checkAdminUnlocked = createServerFn({ method: "POST" })
+  .inputValidator((d: { token?: string }) => ({ token: d?.token ? String(d.token) : "" }))
+  .handler(async ({ data }) => {
+    try {
+      return { unlocked: isTokenValid(data.token) };
+    } catch {
+      return { unlocked: false };
+    }
+  });
 
 export const unlockAdmin = createServerFn({ method: "POST" })
   .inputValidator((d: { pin: string }) => ({ pin: String(d.pin ?? "") }))
   .handler(async ({ data }) => {
     const expected = process.env.ADMIN_PIN;
     if (!expected) throw new Error("ADMIN_PIN is not configured");
-    // Blunt brute-force timing across requests.
     await new Promise((r) => setTimeout(r, 250));
-    if (!data.pin || !pinMatches(data.pin, expected)) return { ok: false as const };
-    issueSessionCookie();
-    return { ok: true as const };
+    if (!data.pin || !pinMatches(data.pin, expected)) return { ok: false as const, token: "" };
+    return { ok: true as const, token: issueToken() };
   });
 
-export const lockAdmin = createServerFn({ method: "POST" }).handler(async () => {
-  clearSessionCookie();
-  return { ok: true as const };
-});
-
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
-  .inputValidator((data: { dataUrl: string }) => ({ dataUrl: String(data.dataUrl ?? "") }))
+  .inputValidator((data: { dataUrl: string; token: string }) => ({
+    dataUrl: String(data.dataUrl ?? ""),
+    token: String(data.token ?? ""),
+  }))
   .handler(async ({ data }) => {
-    requireUnlocked();
+    requireToken(data.token);
     const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(data.dataUrl);
     if (!match) throw new Error("Invalid image data");
     const mime = match[1];
@@ -154,9 +132,10 @@ export const addFriend = createServerFn({ method: "POST" })
     instagram_url: string;
     quote?: string | null;
     photo_url: string;
+    token: string;
   }) => d)
   .handler(async ({ data }) => {
-    requireUnlocked();
+    requireToken(data.token);
     const clean = validateFriendInput(data);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabaseAdmin.from("friends").insert(clean).select().single();
@@ -172,9 +151,10 @@ export const updateFriend = createServerFn({ method: "POST" })
     instagram_url: string;
     quote?: string | null;
     photo_url: string;
+    token: string;
   }) => d)
   .handler(async ({ data }) => {
-    requireUnlocked();
+    requireToken(data.token);
     const clean = validateFriendInput(data);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabaseAdmin
@@ -188,9 +168,12 @@ export const updateFriend = createServerFn({ method: "POST" })
   });
 
 export const deleteFriend = createServerFn({ method: "POST" })
-  .inputValidator((d: { id: string }) => ({ id: String(d.id ?? "") }))
+  .inputValidator((d: { id: string; token: string }) => ({
+    id: String(d.id ?? ""),
+    token: String(d.token ?? ""),
+  }))
   .handler(async ({ data }) => {
-    requireUnlocked();
+    requireToken(data.token);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error } = await supabaseAdmin.from("friends").delete().eq("id", data.id);
     if (error) throw error;
@@ -204,9 +187,10 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
     hero_photo_url?: string | null;
     stat_label?: string;
     profile_url?: string;
+    token: string;
   }) => d)
   .handler(async ({ data }) => {
-    requireUnlocked();
+    requireToken(data.token);
     const patch: {
       hero_name?: string;
       hero_tagline?: string;
