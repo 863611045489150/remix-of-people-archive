@@ -14,106 +14,16 @@ export type Database = {
   }
   public: {
     Tables: {
-      friends: {
-        Row: {
-          category: string
-          created_at: string
-          id: string
-          instagram_url: string
-          name: string
-          photo_url: string
-          quote: string | null
-          sort_order: number
-        }
-        Insert: {
-          category: string
-          created_at?: string
-          id?: string
-          instagram_url: string
-          name: string
-          photo_url: string
-          quote?: string | null
-          sort_order?: number
-        }
-        Update: {
-          category?: string
-          created_at?: string
-          id?: string
-          instagram_url?: string
-          name?: string
-          photo_url?: string
-          quote?: string | null
-          sort_order?: number
-        }
-        Relationships: []
-      }
-      site_settings: {
-        Row: {
-          hero_name: string
-          hero_photo_url: string | null
-          hero_tagline: string
-          id: number
-          profile_url: string
-          stat_label: string
-          updated_at: string
-        }
-        Insert: {
-          hero_name?: string
-          hero_photo_url?: string | null
-          hero_tagline?: string
-          id?: number
-          profile_url?: string
-          stat_label?: string
-          updated_at?: string
-        }
-        Update: {
-          hero_name?: string
-          hero_photo_url?: string | null
-          hero_tagline?: string
-          id?: number
-          profile_url?: string
-          stat_label?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
-      user_roles: {
-        Row: {
-          created_at: string
-          id: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
-        }
-        Insert: {
-          created_at?: string
-          id?: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
-        }
-        Update: {
-          created_at?: string
-          id?: string
-          role?: Database["public"]["Enums"]["app_role"]
-          user_id?: string
-        }
-        Relationships: []
-      }
+      [_ in never]: never
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      bootstrap_first_admin: { Args: never; Returns: boolean }
-      has_role: {
-        Args: {
-          _role: Database["public"]["Enums"]["app_role"]
-          _user_id: string
-        }
-        Returns: boolean
-      }
+      [_ in never]: never
     }
     Enums: {
-      app_role: "admin"
+      [_ in never]: never
     }
     CompositeTypes: {
       [_ in never]: never
@@ -240,8 +150,6 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {
-      app_role: ["admin"],
-    },
+    Enums: {},
   },
 } as const
