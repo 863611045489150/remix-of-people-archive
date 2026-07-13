@@ -2,16 +2,21 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = "https://nlfudwbvbyryynvtnaic.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZnVkd2J2YnlyeXludnRuYWljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5NDA3NjMsImV4cCI6MjA5OTUxNjc2M30.L7xUhCVT0FXkCZGU9jAGeGyzvdgyCCDxGNoDEO2klm0";
+const SUPABASE_URL =
+  (import.meta.env.VITE_SUPABASE_URL as string | undefined) ??
+  "https://nlfudwbvbyryynvtnaic.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY =
+  (import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined) ??
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5sZnVkd2J2YnlyeXludnRuYWljIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM5NDA3NjMsImV4cCI6MjA5OTUxNjc2M30.L7xUhCVT0FXkCZGU9jAGeGyzvdgyCCDxGNoDEO2klm0";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
 export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: {
-    storage: localStorage,
-    persistSession: true,
-    autoRefreshToken: true,
+    // localStorage is undefined during SSR — only pass it in the browser.
+    storage: typeof window !== "undefined" ? window.localStorage : undefined,
+    persistSession: typeof window !== "undefined",
+    autoRefreshToken: typeof window !== "undefined",
   }
 });
