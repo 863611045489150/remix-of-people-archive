@@ -118,27 +118,38 @@ export const unlockAdmin = createServerFn({ method: "POST" })
   });
 
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
-  .inputValidator((data: { dataUrl: string; token: string }) => ({
-    dataUrl: String(data.dataUrl ?? ""),
+  .inputValidator((data: { mime: string; token: string }) => ({
+    mime: String(data.mime ?? ""),
     token: String(data.token ?? ""),
   }))
   .handler(async ({ data }) => {
     requireToken(data.token);
-    const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(data.dataUrl);
-    if (!match) throw new Error("Invalid image data");
-    const mime = match[1];
+    const mime = data.mime.toLowerCase();
+    if (!/^image\/[a-z0-9.+-]+$/i.test(mime)) throw new Error("Invalid image type");
     const ext = mime.split("/")[1].replace("jpeg", "jpg");
-    const bytes = Buffer.from(match[2], "base64");
-    if (bytes.length > 2_000_000) throw new Error("Image too large");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const path = `${crypto.randomUUID()}.${ext}`;
-    const { error } = await supabaseAdmin.storage
+    const { data: upload, error } = await supabaseAdmin.storage
       .from("friend-photos")
-      .upload(path, bytes, { contentType: mime, upsert: false });
+      .createSignedUploadUrl(path, { upsert: false });
     if (error) {
-      console.error("[uploadFriendPhoto] upload error:", error);
-      throw new Error(`upload: ${error.message ?? JSON.stringify(error)}`);
+      console.error("[uploadFriendPhoto] signed upload error:", error);
+      throw new Error(`upload sign: ${error.message ?? JSON.stringify(error)}`);
     }
+    if (!upload) throw new Error("upload sign: Failed to create signed upload URL");
+    return { path, uploadToken: upload.token };
+  });
+
+export const getFriendPhotoUrl = createServerFn({ method: "POST" })
+  .inputValidator((data: { path: string; token: string }) => ({
+    path: String(data.path ?? ""),
+    token: String(data.token ?? ""),
+  }))
+  .handler(async ({ data }) => {
+    requireToken(data.token);
+    const path = data.path.trim();
+    if (!/^[a-f0-9-]+\.(jpg|png|webp|gif|avif)$/i.test(path)) throw new Error("Invalid photo path");
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: signed, error: sErr } = await supabaseAdmin.storage
       .from("friend-photos")
       .createSignedUrl(path, 60 * 60 * 24 * 365 * 100);
