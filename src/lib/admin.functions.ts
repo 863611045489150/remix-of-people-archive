@@ -99,6 +99,7 @@ export const debugAdminEnv = createServerFn({ method: "GET" }).handler(async () 
     sessionSecretLength: process.env.ADMIN_SESSION_SECRET ? process.env.ADMIN_SESSION_SECRET.length : 0,
     hasSupabaseUrl: !!process.env.SUPABASE_URL,
     hasSupabasePublishableKey: !!process.env.SUPABASE_PUBLISHABLE_KEY,
+    hasSupabaseServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
     processEnvKeyCount: Object.keys(process.env ?? {}).length,
     runtimeUA: typeof navigator !== "undefined" ? String(navigator.userAgent).slice(0, 80) : "no-navigator",
     isVercel: !!process.env.VERCEL,
