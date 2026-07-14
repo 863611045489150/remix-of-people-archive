@@ -135,11 +135,17 @@ export const uploadFriendPhoto = createServerFn({ method: "POST" })
     const { error } = await supabaseAdmin.storage
       .from("friend-photos")
       .upload(path, bytes, { contentType: mime, upsert: false });
-    if (error) throw error;
+    if (error) {
+      console.error("[uploadFriendPhoto] upload error:", error);
+      throw new Error(`upload: ${error.message ?? JSON.stringify(error)}`);
+    }
     const { data: signed, error: sErr } = await supabaseAdmin.storage
       .from("friend-photos")
       .createSignedUrl(path, 60 * 60 * 24 * 365 * 100);
-    if (sErr || !signed) throw sErr ?? new Error("Failed to sign URL");
+    if (sErr || !signed) {
+      console.error("[uploadFriendPhoto] sign error:", sErr);
+      throw new Error(`sign: ${sErr?.message ?? "Failed to sign URL"}`);
+    }
     return { url: signed.signedUrl, path };
   });
 
