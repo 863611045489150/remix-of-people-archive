@@ -6,6 +6,7 @@ import { CATEGORIES, type FriendRow, type SiteSettings } from "@/lib/site-consta
 import {
   addFriend,
   checkAdminUnlocked,
+  debugAdminEnv,
   deleteFriend,
   unlockAdmin,
   updateFriend,
@@ -91,9 +92,11 @@ function AdminPage() {
 
 function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
   const unlock = useServerFn(unlockAdmin);
+  const debug = useServerFn(debugAdminEnv);
   const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [diag, setDiag] = useState<string>("");
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -143,6 +146,35 @@ function PinGate({ onUnlocked }: { onUnlocked: () => void }) {
         <button type="submit" style={{ ...btnPrimary, opacity: busy ? 0.5 : 1 }} disabled={busy || !pin}>
           {busy ? "Checking…" : "Unlock"}
         </button>
+        <button
+          type="button"
+          style={btnGhost}
+          onClick={async () => {
+            try {
+              const r = await debug();
+              setDiag(JSON.stringify(r, null, 2));
+            } catch (e) {
+              setDiag(e instanceof Error ? e.message : "diag failed");
+            }
+          }}
+        >
+          Check env (diagnostic)
+        </button>
+        {diag && (
+          <pre
+            style={{
+              fontSize: 12,
+              background: "#FFF",
+              border: "1px solid #E5DDD1",
+              borderRadius: 12,
+              padding: 12,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}
+          >
+            {diag}
+          </pre>
+        )}
       </form>
     </div>
   );
