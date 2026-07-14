@@ -375,7 +375,9 @@ function FriendForm({
       const r = await uploadPhoto({ data: { dataUrl, token: getToken() } });
       setPhotoUrl(r.url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Upload failed");
+      const msg = e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
+      console.error("[uploadPhoto] failed:", e);
+      setError(`Upload failed: ${msg}`);
     } finally {
       setUploading(false);
     }
