@@ -89,6 +89,23 @@ export const checkAdminUnlocked = createServerFn({ method: "POST" })
     }
   });
 
+// TEMPORARY DIAGNOSTIC — safe: returns booleans only, never values.
+// Remove once the Vercel env-var visibility issue is confirmed and fixed.
+export const debugAdminEnv = createServerFn({ method: "GET" }).handler(async () => {
+  return {
+    hasAdminPin: !!process.env.ADMIN_PIN,
+    adminPinLength: process.env.ADMIN_PIN ? process.env.ADMIN_PIN.length : 0,
+    hasSessionSecret: !!process.env.ADMIN_SESSION_SECRET,
+    sessionSecretLength: process.env.ADMIN_SESSION_SECRET ? process.env.ADMIN_SESSION_SECRET.length : 0,
+    hasSupabaseUrl: !!process.env.SUPABASE_URL,
+    hasSupabasePublishableKey: !!process.env.SUPABASE_PUBLISHABLE_KEY,
+    processEnvKeyCount: Object.keys(process.env ?? {}).length,
+    runtimeUA: typeof navigator !== "undefined" ? String(navigator.userAgent).slice(0, 80) : "no-navigator",
+    isVercel: !!process.env.VERCEL,
+    vercelEnv: process.env.VERCEL_ENV ?? null,
+  };
+});
+
 export const unlockAdmin = createServerFn({ method: "POST" })
   .inputValidator((d: { pin: string }) => ({ pin: String(d.pin ?? "") }))
   .handler(async ({ data }) => {
