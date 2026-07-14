@@ -8,6 +8,7 @@ import {
   checkAdminUnlocked,
   debugAdminEnv,
   deleteFriend,
+  getFriendPhotoUrl,
   unlockAdmin,
   updateFriend,
   updateSiteSettings,
@@ -356,6 +357,7 @@ function FriendForm({
   const add = useServerFn(addFriend);
   const upd = useServerFn(updateFriend);
   const uploadPhoto = useServerFn(uploadFriendPhoto);
+  const getPhotoUrl = useServerFn(getFriendPhotoUrl);
 
   const [name, setName] = useState(initial.name ?? "");
   const [category, setCategory] = useState<string>(initial.category ?? CATEGORIES[0]);
@@ -371,9 +373,16 @@ function FriendForm({
     setUploading(true);
     setError("");
     try {
-      const dataUrl = await resizeToSquare(file, 480);
-      const r = await uploadPhoto({ data: { dataUrl, token: getToken() } });
-      setPhotoUrl(r.url);
+      const blob = await resizeToSquare(file, 480);
+      if (blob.size > 2_000_000) throw new Error("Image too large");
+      const token = getToken();
+      const upload = await uploadPhoto({ data: { mime: blob.type, token } });
+      const { error: uploadError } = await supabase.storage
+        .from("friend-photos")
+        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, { contentType: blob.type, upsert: false });
+      if (uploadError) throw new Error(`upload: ${uploadError.message}`);
+      const signed = await getPhotoUrl({ data: { path: upload.path, token } });
+      setPhotoUrl(signed.url);
     } catch (e) {
       const msg = e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
       console.error("[uploadPhoto] failed:", e);
@@ -533,6 +542,7 @@ function FriendForm({
 function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: () => Promise<void> }) {
   const save = useServerFn(updateSiteSettings);
   const uploadPhoto = useServerFn(uploadFriendPhoto);
+  const getPhotoUrl = useServerFn(getFriendPhotoUrl);
   const [heroName, setHeroName] = useState(settings.hero_name);
   const [tagline, setTagline] = useState(settings.hero_tagline);
   const [statLabel, setStatLabel] = useState(settings.stat_label);
@@ -546,9 +556,19 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
   async function pickPhoto(file: File) {
     setUploading(true);
     try {
-      const dataUrl = await resizeToSquare(file, 640);
-      const r = await uploadPhoto({ data: { dataUrl, token: getToken() } });
-      setPhotoUrl(r.url);
+      setMsg("");
+      const blob = await resizeToSquare(file, 640);
+      if (blob.size > 2_000_000) throw new Error("Image too large");
+      const token = getToken();
+      const upload = await uploadPhoto({ data: { mime: blob.type, token } });
+      const { error: uploadError } = await supabase.storage
+        .from("friend-photos")
+        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, { contentType: blob.type, upsert: false });
+      if (uploadError) throw new Error(`upload: ${uploadError.message}`);
+      const signed = await getPhotoUrl({ data: { path: upload.path, token } });
+      setPhotoUrl(signed.url);
+    } catch (e) {
+      setMsg(`Upload failed: ${e instanceof Error ? e.message : "Failed"}`);
     } finally {
       setUploading(false);
     }
@@ -649,7 +669,7 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
   );
 }
 
-async function resizeToSquare(file: File, size: number): Promise<string> {
+async function resizeToSquare(file: File, size: number): Promise<Blob> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -667,7 +687,9 @@ async function resizeToSquare(file: File, size: number): Promise<string> {
     const sx = (img.naturalWidth - side) / 2;
     const sy = (img.naturalHeight - side) / 2;
     ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
-    return canvas.toDataURL("image/jpeg", 0.9);
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob) throw new Error("Image export failed");
+    return blob;
   } finally {
     URL.revokeObjectURL(url);
   }
