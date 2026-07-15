@@ -241,7 +241,22 @@ function Dashboard({ onLocked }: { onLocked: () => void }) {
         {tab === "friends" && (
           <FriendsTab friends={friends} editing={editing} setEditing={setEditing} refresh={refresh} />
         )}
-        {tab === "settings" && settings && <SettingsTab settings={settings} refresh={refresh} />}
+        {tab === "settings" && (
+          <SettingsTab
+            settings={
+              settings ?? {
+                id: 1,
+                hero_name: "",
+                hero_tagline: "",
+                hero_photo_url: null,
+                stat_label: "",
+                profile_url: "",
+                updated_at: new Date().toISOString(),
+              }
+            }
+            refresh={refresh}
+          />
+        )}
       </div>
     </div>
   );
@@ -376,11 +391,17 @@ function FriendForm({
       const blob = await resizeToSquare(file, 480);
       if (blob.size > 2_000_000) throw new Error("Image too large");
       const token = getToken();
-      const upload = await uploadPhoto({ data: { mime: blob.type, token } });
+      const upload = await uploadPhoto({ data: { mime: "image/jpeg", token } });
       const { error: uploadError } = await supabase.storage
         .from("friend-photos")
-        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, { contentType: blob.type, upsert: false });
-      if (uploadError) throw new Error(`upload: ${uploadError.message}`);
+        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, {
+          contentType: "image/jpeg",
+          upsert: false,
+        });
+      if (uploadError) {
+        console.error("[uploadToSignedUrl] error object:", uploadError);
+        throw new Error(`upload: ${uploadError.message || JSON.stringify(uploadError)}`);
+      }
       const signed = await getPhotoUrl({ data: { path: upload.path, token } });
       setPhotoUrl(signed.url);
     } catch (e) {
@@ -560,11 +581,17 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
       const blob = await resizeToSquare(file, 640);
       if (blob.size > 2_000_000) throw new Error("Image too large");
       const token = getToken();
-      const upload = await uploadPhoto({ data: { mime: blob.type, token } });
+      const upload = await uploadPhoto({ data: { mime: "image/jpeg", token } });
       const { error: uploadError } = await supabase.storage
         .from("friend-photos")
-        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, { contentType: blob.type, upsert: false });
-      if (uploadError) throw new Error(`upload: ${uploadError.message}`);
+        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, {
+          contentType: "image/jpeg",
+          upsert: false,
+        });
+      if (uploadError) {
+        console.error("[uploadToSignedUrl settings] error object:", uploadError);
+        throw new Error(`upload: ${uploadError.message || JSON.stringify(uploadError)}`);
+      }
       const signed = await getPhotoUrl({ data: { path: upload.path, token } });
       setPhotoUrl(signed.url);
     } catch (e) {
@@ -689,7 +716,8 @@ async function resizeToSquare(file: File, size: number): Promise<Blob> {
     ctx.drawImage(img, sx, sy, side, side, 0, 0, size, size);
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
     if (!blob) throw new Error("Image export failed");
-    return blob;
+    // Some browsers set blob.type = ""; force a stable JPEG blob.
+    return blob.type === "image/jpeg" ? blob : new Blob([blob], { type: "image/jpeg" });
   } finally {
     URL.revokeObjectURL(url);
   }
