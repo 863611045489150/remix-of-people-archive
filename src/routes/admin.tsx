@@ -251,7 +251,6 @@ function Dashboard({ onLocked }: { onLocked: () => void }) {
                 hero_photo_url: null,
                 stat_label: "",
                 profile_url: "",
-                updated_at: new Date().toISOString(),
               }
             }
             refresh={refresh}
