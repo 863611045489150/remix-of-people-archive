@@ -118,26 +118,34 @@ export const unlockAdmin = createServerFn({ method: "POST" })
   });
 
 export const uploadFriendPhoto = createServerFn({ method: "POST" })
-  .inputValidator((data: { mime: string; token: string }) => ({
+  .inputValidator((data: { imageBase64: string; mime: string; token: string }) => ({
+    imageBase64: String(data.imageBase64 ?? ""),
     mime: String(data.mime ?? ""),
     token: String(data.token ?? ""),
   }))
   .handler(async ({ data }) => {
     requireToken(data.token);
     const mime = data.mime.toLowerCase();
-    if (!/^image\/[a-z0-9.+-]+$/i.test(mime)) throw new Error("Invalid image type");
-    const ext = mime.split("/")[1].replace("jpeg", "jpg");
+    if (!/^image\/(jpeg|png|webp|gif|avif|heic|heif)$/i.test(mime)) throw new Error("Invalid image type");
+    const buffer = Buffer.from(data.imageBase64, "base64");
+    if (buffer.byteLength > 5_000_000) throw new Error("Image too large (max 5 MB after resize)");
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const path = `${crypto.randomUUID()}.${ext}`;
-    const { data: upload, error } = await supabaseAdmin.storage
+    const path = `${crypto.randomUUID()}.jpg`;
+    const { error: uploadError } = await supabaseAdmin.storage
       .from("friend-photos")
-      .createSignedUploadUrl(path, { upsert: false });
-    if (error) {
-      console.error("[uploadFriendPhoto] signed upload error:", error);
-      throw new Error(`upload sign: ${error.message ?? JSON.stringify(error)}`);
+      .upload(path, buffer, { contentType: "image/jpeg", upsert: false });
+    if (uploadError) {
+      console.error("[uploadFriendPhoto] upload error:", uploadError);
+      throw new Error(`upload: ${uploadError.message ?? JSON.stringify(uploadError)}`);
     }
-    if (!upload) throw new Error("upload sign: Failed to create signed upload URL");
-    return { path, uploadToken: upload.token };
+    const { data: signed, error: signError } = await supabaseAdmin.storage
+      .from("friend-photos")
+      .createSignedUrl(path, 60 * 60 * 24 * 365 * 100);
+    if (signError || !signed) {
+      console.error("[uploadFriendPhoto] sign error:", signError);
+      throw new Error(`sign: ${signError?.message ?? "Failed to sign URL"}`);
+    }
+    return { url: signed.signedUrl, path };
   });
 
 export const getFriendPhotoUrl = createServerFn({ method: "POST" })

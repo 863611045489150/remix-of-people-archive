@@ -8,7 +8,6 @@ import {
   checkAdminUnlocked,
   debugAdminEnv,
   deleteFriend,
-  getFriendPhotoUrl,
   unlockAdmin,
   updateFriend,
   updateSiteSettings,
@@ -371,7 +370,6 @@ function FriendForm({
   const add = useServerFn(addFriend);
   const upd = useServerFn(updateFriend);
   const uploadPhoto = useServerFn(uploadFriendPhoto);
-  const getPhotoUrl = useServerFn(getFriendPhotoUrl);
 
   const [name, setName] = useState(initial.name ?? "");
   const [category, setCategory] = useState<string>(initial.category ?? CATEGORIES[0]);
@@ -390,19 +388,9 @@ function FriendForm({
       const blob = await resizeToSquare(file, 480);
       if (blob.size > 2_000_000) throw new Error("Image too large");
       const token = getToken();
-      const upload = await uploadPhoto({ data: { mime: "image/jpeg", token } });
-      const { error: uploadError } = await supabase.storage
-        .from("friend-photos")
-        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, {
-          contentType: "image/jpeg",
-          upsert: false,
-        });
-      if (uploadError) {
-        console.error("[uploadToSignedUrl] error object:", uploadError);
-        throw new Error(`upload: ${uploadError.message || JSON.stringify(uploadError)}`);
-      }
-      const signed = await getPhotoUrl({ data: { path: upload.path, token } });
-      setPhotoUrl(signed.url);
+      const imageBase64 = await blobToBase64(blob);
+      const result = await uploadPhoto({ data: { imageBase64, mime: "image/jpeg", token } });
+      setPhotoUrl(result.url);
     } catch (e) {
       const msg = e instanceof Error ? e.message : typeof e === "string" ? e : JSON.stringify(e);
       console.error("[uploadPhoto] failed:", e);
@@ -562,7 +550,6 @@ function FriendForm({
 function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: () => Promise<void> }) {
   const save = useServerFn(updateSiteSettings);
   const uploadPhoto = useServerFn(uploadFriendPhoto);
-  const getPhotoUrl = useServerFn(getFriendPhotoUrl);
   const [heroName, setHeroName] = useState(settings.hero_name);
   const [tagline, setTagline] = useState(settings.hero_tagline);
   const [statLabel, setStatLabel] = useState(settings.stat_label);
@@ -580,19 +567,9 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
       const blob = await resizeToSquare(file, 640);
       if (blob.size > 2_000_000) throw new Error("Image too large");
       const token = getToken();
-      const upload = await uploadPhoto({ data: { mime: "image/jpeg", token } });
-      const { error: uploadError } = await supabase.storage
-        .from("friend-photos")
-        .uploadToSignedUrl(upload.path, upload.uploadToken, blob, {
-          contentType: "image/jpeg",
-          upsert: false,
-        });
-      if (uploadError) {
-        console.error("[uploadToSignedUrl settings] error object:", uploadError);
-        throw new Error(`upload: ${uploadError.message || JSON.stringify(uploadError)}`);
-      }
-      const signed = await getPhotoUrl({ data: { path: upload.path, token } });
-      setPhotoUrl(signed.url);
+      const imageBase64 = await blobToBase64(blob);
+      const result = await uploadPhoto({ data: { imageBase64, mime: "image/jpeg", token } });
+      setPhotoUrl(result.url);
     } catch (e) {
       setMsg(`Upload failed: ${e instanceof Error ? e.message : "Failed"}`);
     } finally {
@@ -693,6 +670,19 @@ function SettingsTab({ settings, refresh }: { settings: SiteSettings; refresh: (
       </div>
     </form>
   );
+}
+
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // result is "data:image/jpeg;base64,<data>" — strip the data-URL prefix
+      resolve(result.split(",")[1]);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function resizeToSquare(file: File, size: number): Promise<Blob> {
