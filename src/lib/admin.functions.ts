@@ -168,6 +168,41 @@ export const getFriendPhotoUrl = createServerFn({ method: "POST" })
     return { url: signed.signedUrl, path };
   });
 
+// ---------------------------------------------------------------------------
+// Storage cleanup helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extract the file path (e.g. "uuid.jpg") from a Supabase signed or public URL.
+ * Returns null for any URL that doesn't match the expected pattern.
+ */
+function extractStoragePath(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const parsed = new URL(url);
+    const match = parsed.pathname.match(/\/object\/(?:sign|public)\/friend-photos\/(.+)$/);
+    return match ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Delete a file from the friend-photos bucket. Swallows all errors so that a
+ * cleanup failure never prevents the main DB operation from completing.
+ */
+async function tryDeleteStorageFile(path: string): Promise<void> {
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error } = await supabaseAdmin.storage.from("friend-photos").remove([path]);
+    if (error) console.error("[tryDeleteStorageFile] remove error:", error);
+  } catch (e) {
+    console.error("[tryDeleteStorageFile] unexpected error for path:", path, e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+
 export const addFriend = createServerFn({ method: "POST" })
   .inputValidator((d: {
     name: string;
@@ -200,6 +235,12 @@ export const updateFriend = createServerFn({ method: "POST" })
     requireToken(data.token);
     const clean = validateFriendInput(data);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Fetch old photo URL before overwriting so we can clean up storage
+    const { data: existing } = await supabaseAdmin
+      .from("friends")
+      .select("photo_url")
+      .eq("id", data.id)
+      .single();
     const { data: row, error } = await supabaseAdmin
       .from("friends")
       .update(clean)
@@ -207,6 +248,11 @@ export const updateFriend = createServerFn({ method: "POST" })
       .select()
       .single();
     if (error) throw error;
+    // Delete old photo from storage if it was replaced
+    if (existing?.photo_url && existing.photo_url !== clean.photo_url) {
+      const oldPath = extractStoragePath(existing.photo_url);
+      if (oldPath) await tryDeleteStorageFile(oldPath);
+    }
     return row;
   });
 
@@ -218,8 +264,19 @@ export const deleteFriend = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     requireToken(data.token);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Fetch photo URL before deletion so we can clean up storage
+    const { data: existing } = await supabaseAdmin
+      .from("friends")
+      .select("photo_url")
+      .eq("id", data.id)
+      .single();
     const { error } = await supabaseAdmin.from("friends").delete().eq("id", data.id);
     if (error) throw error;
+    // Delete photo from storage after record is gone
+    if (existing?.photo_url) {
+      const path = extractStoragePath(existing.photo_url);
+      if (path) await tryDeleteStorageFile(path);
+    }
     return { ok: true as const };
   });
 
@@ -248,6 +305,12 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
     if (data.stat_label !== undefined) patch.stat_label = String(data.stat_label).trim().slice(0, 100);
     if (data.profile_url !== undefined) patch.profile_url = String(data.profile_url).trim().slice(0, 500);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Fetch old hero photo URL so we can clean up storage if it changed
+    const { data: existing } = await supabaseAdmin
+      .from("site_settings")
+      .select("hero_photo_url")
+      .eq("id", 1)
+      .single();
     const { data: row, error } = await supabaseAdmin
       .from("site_settings")
       .update(patch)
@@ -255,5 +318,15 @@ export const updateSiteSettings = createServerFn({ method: "POST" })
       .select()
       .single();
     if (error) throw error;
+    // Delete old hero photo from storage if it was replaced
+    const newHeroPhoto = data.hero_photo_url !== undefined ? (data.hero_photo_url || null) : undefined;
+    if (
+      newHeroPhoto !== undefined &&
+      existing?.hero_photo_url &&
+      existing.hero_photo_url !== newHeroPhoto
+    ) {
+      const oldPath = extractStoragePath(existing.hero_photo_url);
+      if (oldPath) await tryDeleteStorageFile(oldPath);
+    }
     return row;
   });
