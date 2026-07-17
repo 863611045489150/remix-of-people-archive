@@ -212,14 +212,56 @@ function CategorySection({ label, items }: { label: string; items: FriendRow[] }
   const { ref, shown } = useReveal<HTMLDivElement>();
   const isMobile = useIsMobile();
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    let raf = 0;
+    const compute = () => {
+      raf = 0;
+      const cards = Array.from(
+        el.querySelectorAll<HTMLElement>("[data-friend-card]"),
+      );
+      if (cards.length === 0) return;
+      const center = el.scrollLeft + el.clientWidth / 2;
+      let best = 0;
+      let bestDist = Infinity;
+      cards.forEach((c, i) => {
+        const cc = c.offsetLeft + c.offsetWidth / 2;
+        const d = Math.abs(cc - center);
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      });
+      setActiveIdx(best);
+    };
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(compute);
+    };
+    compute();
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [isMobile, items.length]);
 
   const scrollByCard = (dir: 1 | -1) => {
     const el = scrollerRef.current;
     if (!el) return;
-    const card = el.querySelector<HTMLElement>("[data-friend-card]");
-    const gap = 16;
-    const delta = (card?.offsetWidth ?? el.clientWidth * 0.78) + gap;
-    el.scrollBy({ left: dir * delta, behavior: "smooth" });
+    const cards = Array.from(
+      el.querySelectorAll<HTMLElement>("[data-friend-card]"),
+    );
+    if (cards.length === 0) return;
+    const next = Math.max(0, Math.min(cards.length - 1, activeIdx + dir));
+    const target = cards[next];
+    const left =
+      target.offsetLeft - (el.clientWidth - target.offsetWidth) / 2;
+    el.scrollTo({ left, behavior: "smooth" });
   };
 
   return (
@@ -270,14 +312,15 @@ function CategorySection({ label, items }: { label: string; items: FriendRow[] }
             className="mobile-scroller"
             style={{
               display: "flex",
-              gap: 16,
+              gap: 12,
               overflowX: "auto",
               scrollSnapType: "x mandatory",
               WebkitOverflowScrolling: "touch",
               scrollbarWidth: "none",
-              paddingLeft: 24,
-              paddingRight: 24,
-              paddingBottom: 8,
+              paddingLeft: "18%",
+              paddingRight: "18%",
+              paddingTop: 24,
+              paddingBottom: 24,
             }}
           >
             {items.map((f, i) => (
@@ -285,8 +328,14 @@ function CategorySection({ label, items }: { label: string; items: FriendRow[] }
                 key={f.id}
                 data-friend-card
                 style={{
-                  flex: "0 0 78%",
-                  scrollSnapAlign: "start",
+                  flex: "0 0 64%",
+                  scrollSnapAlign: "center",
+                  transform: i === activeIdx ? "scale(1)" : "scale(0.88)",
+                  opacity: i === activeIdx ? 1 : 0.55,
+                  transition:
+                    "transform 300ms ease, opacity 300ms ease",
+                  transformOrigin: "center center",
+                  display: "flex",
                 }}
               >
                 <FriendCard friend={f} index={i} />
@@ -297,7 +346,8 @@ function CategorySection({ label, items }: { label: string; items: FriendRow[] }
             aria-label="Scroll left"
             onClick={() => scrollByCard(-1)}
             className="snap-arrow"
-            style={{ left: 8 }}
+            style={{ left: 6, opacity: activeIdx === 0 ? 0.35 : 1 }}
+            disabled={activeIdx === 0}
           >
             ‹
           </button>
@@ -305,7 +355,11 @@ function CategorySection({ label, items }: { label: string; items: FriendRow[] }
             aria-label="Scroll right"
             onClick={() => scrollByCard(1)}
             className="snap-arrow"
-            style={{ right: 8 }}
+            style={{
+              right: 6,
+              opacity: activeIdx === items.length - 1 ? 0.35 : 1,
+            }}
+            disabled={activeIdx === items.length - 1}
           >
             ›
           </button>
