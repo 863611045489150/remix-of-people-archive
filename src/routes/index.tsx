@@ -210,6 +210,18 @@ function Hero({ settings, loaded }: { settings: SiteSettings | null; loaded: boo
 
 function CategorySection({ label, items }: { label: string; items: FriendRow[] }) {
   const { ref, shown } = useReveal<HTMLDivElement>();
+  const isMobile = useIsMobile();
+  const scrollerRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollByCard = (dir: 1 | -1) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    const card = el.querySelector<HTMLElement>("[data-friend-card]");
+    const gap = 16;
+    const delta = (card?.offsetWidth ?? el.clientWidth * 0.78) + gap;
+    el.scrollBy({ left: dir * delta, behavior: "smooth" });
+  };
+
   return (
     <section style={{ paddingLeft: 24, paddingRight: 24, marginTop: 96 }} className="lg-pad">
       <div
@@ -238,35 +250,106 @@ function CategorySection({ label, items }: { label: string; items: FriendRow[] }
         <div style={{ flex: 1, height: 1, backgroundColor: "#E5DDD1" }} />
       </div>
 
-      <div
-        style={{
-          marginTop: 48,
-          display: "grid",
-          gap: 24,
-          gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
-        }}
-      >
-        {items.map((f, i) => (
-          <FriendCard key={f.id} friend={f} index={i} />
-        ))}
-        {items.length === 0 && (
-          <p
+      {items.length === 0 ? (
+        <p
+          style={{
+            marginTop: 48,
+            fontFamily: "Inter, sans-serif",
+            fontStyle: "italic",
+            fontSize: 14,
+            lineHeight: 1.5,
+            color: "#8A8378",
+          }}
+        >
+          No one here yet.
+        </p>
+      ) : isMobile ? (
+        <div style={{ position: "relative", marginTop: 32, marginLeft: -24, marginRight: -24 }}>
+          <div
+            ref={scrollerRef}
+            className="mobile-scroller"
             style={{
-              fontFamily: "Inter, sans-serif",
-              fontStyle: "italic",
-              fontSize: 14,
-              lineHeight: 1.5,
-              color: "#8A8378",
+              display: "flex",
+              gap: 16,
+              overflowX: "auto",
+              scrollSnapType: "x mandatory",
+              WebkitOverflowScrolling: "touch",
+              scrollbarWidth: "none",
+              paddingLeft: 24,
+              paddingRight: 24,
+              paddingBottom: 8,
             }}
           >
-            No one here yet.
-          </p>
-        )}
-      </div>
+            {items.map((f, i) => (
+              <div
+                key={f.id}
+                data-friend-card
+                style={{
+                  flex: "0 0 78%",
+                  scrollSnapAlign: "start",
+                }}
+              >
+                <FriendCard friend={f} index={i} />
+              </div>
+            ))}
+          </div>
+          <button
+            aria-label="Scroll left"
+            onClick={() => scrollByCard(-1)}
+            className="snap-arrow"
+            style={{ left: 8 }}
+          >
+            ‹
+          </button>
+          <button
+            aria-label="Scroll right"
+            onClick={() => scrollByCard(1)}
+            className="snap-arrow"
+            style={{ right: 8 }}
+          >
+            ›
+          </button>
+        </div>
+      ) : (
+        <div
+          style={{
+            marginTop: 48,
+            display: "grid",
+            gap: 24,
+            gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))",
+          }}
+        >
+          {items.map((f, i) => (
+            <FriendCard key={f.id} friend={f} index={i} />
+          ))}
+        </div>
+      )}
 
       <style>{`
         @media (min-width: 768px) {
           section.lg-pad { padding-left: 48px; padding-right: 48px; }
+          .snap-arrow { display: none !important; }
+        }
+        .mobile-scroller::-webkit-scrollbar { display: none; }
+        .snap-arrow {
+          position: absolute;
+          top: 50%;
+          transform: translateY(-50%);
+          width: 40px;
+          height: 40px;
+          border-radius: 9999px;
+          border: 1px solid #E5DDD1;
+          background: rgba(255,255,255,0.85);
+          backdrop-filter: blur(8px);
+          color: #1A1A1A;
+          font-size: 24px;
+          line-height: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+          z-index: 2;
         }
       `}</style>
     </section>
