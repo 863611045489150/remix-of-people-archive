@@ -422,8 +422,11 @@ function FriendCard({ friend, index }: { friend: FriendRow; index: number }) {
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
       style={{
-        display: "block",
-        padding: 24,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        width: "100%",
+        padding: 20,
         borderRadius: 16,
         border: "1px solid #E5DDD1",
         background: "rgba(255,255,255,0.85)",
@@ -442,11 +445,12 @@ function FriendCard({ friend, index }: { friend: FriendRow; index: number }) {
     >
       <div
         style={{
-          width: 96,
-          height: 96,
+          width: 88,
+          height: 88,
           borderRadius: "9999px",
           overflow: "hidden",
-          margin: "16px auto 0",
+          margin: "8px auto 0",
+          flexShrink: 0,
           backgroundColor: "#F2ECE0",
         }}
       >
@@ -460,36 +464,37 @@ function FriendCard({ friend, index }: { friend: FriendRow; index: number }) {
         style={{
           fontFamily: "Fraunces, serif",
           fontWeight: 500,
-          fontSize: 20,
+          fontSize: 18,
           lineHeight: 1.2,
           color: "#1A1A1A",
-          marginTop: 16,
+          marginTop: 14,
           overflowWrap: "break-word",
+          minHeight: "1.2em",
         }}
       >
         {friend.name}
       </div>
-      {friend.quote && friend.quote.trim() && (
-        <div
-          style={{
-            fontFamily: "Inter, sans-serif",
-            fontStyle: "italic",
-            fontWeight: 400,
-            fontSize: 14,
-            lineHeight: 1.5,
-            color: "#8A8378",
-            marginTop: 8,
-            display: "-webkit-box",
-            WebkitLineClamp: 1,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            overflowWrap: "break-word",
-          }}
-        >
-          “{friend.quote}”
-        </div>
-      )}
+      <div
+        style={{
+          fontFamily: "Inter, sans-serif",
+          fontStyle: "italic",
+          fontWeight: 400,
+          fontSize: 13,
+          lineHeight: 1.5,
+          color: "#8A8378",
+          marginTop: 8,
+          display: "-webkit-box",
+          WebkitLineClamp: 1,
+          WebkitBoxOrient: "vertical",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          overflowWrap: "break-word",
+          minHeight: "1.5em",
+          width: "100%",
+        }}
+      >
+        {friend.quote && friend.quote.trim() ? `“${friend.quote}”` : "\u00A0"}
+      </div>
       <div
         style={{
           fontFamily: "Inter, sans-serif",
